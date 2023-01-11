@@ -13,7 +13,7 @@ use anchor_spl::{
 use dot::program::*;
 use std::{cell::RefCell, rc::Rc};
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("DPzpTr7kZupCWD98LaWNTtXAMhv3qKX7w9CdG7bo5acS");
 
 pub mod seahorse_util {
     use super::*;
@@ -295,14 +295,15 @@ mod seahorse_auction {
         #[account(mut)]
         #[doc = "CHECK: This account is unchecked."]
         pub seller: UncheckedAccount<'info>,
-        # [account (init , payer = payer , seeds = ["currency_account" . as_bytes () . as_ref ()] , bump , token :: mint = currency , token :: authority = auction)]
+        # [account (init , payer = payer , associated_token :: mint = currency , associated_token :: authority = auction)]
         pub currency_holder: Box<Account<'info, TokenAccount>>,
-        # [account (init , payer = payer , seeds = ["item_account" . as_bytes () . as_ref ()] , bump , token :: mint = item , token :: authority = auction)]
+        # [account (init , payer = payer , associated_token :: mint = item , associated_token :: authority = auction)]
         pub item_holder: Box<Account<'info, TokenAccount>>,
         #[account(mut)]
         pub currency: Box<Account<'info, Mint>>,
         #[account(mut)]
         pub item: Box<Account<'info, Mint>>,
+        pub associated_token_program: Program<'info, AssociatedToken>,
         pub rent: Sysvar<'info, Rent>,
         pub system_program: Program<'info, System>,
         pub token_program: Program<'info, Token>,
@@ -316,6 +317,11 @@ mod seahorse_auction {
         end: i64,
     ) -> Result<()> {
         let mut programs = HashMap::new();
+
+        programs.insert(
+            "associated_token_program",
+            ctx.accounts.associated_token_program.to_account_info(),
+        );
 
         programs.insert(
             "system_program",

@@ -4,7 +4,7 @@
 from seahorse.prelude import *
 
 
-declare_id("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS")
+declare_id("DPzpTr7kZupCWD98LaWNTtXAMhv3qKX7w9CdG7bo5acS")
 
 
 class Auction(Account):
@@ -40,11 +40,12 @@ def create_auction(
 
     currency_holder.init(
         payer=payer,
-        seeds=["currency_account"],
         mint=currency,
         authority=auction,
+        associated=True,
+        # decimals= 6
     )
-    item_holder.init(payer=payer, seeds=["item_account"], mint=item, authority=auction)
+    item_holder.init(payer=payer, mint=item, authority=auction, associated=True)
     auction.ongoing = True
     auction.seller = seller.key()
     auction.item_holder = item_holder.key()
