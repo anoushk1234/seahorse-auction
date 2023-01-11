@@ -159,7 +159,9 @@ describe("seahorse_auction", () => {
         payer: sellerPublicKey,
       })
       .signers([seller])
-      .rpc();
+      .rpc({
+        skipPreflight: true,
+      });
     console.log("Your transaction signature", pre);
     const bidderPublicKey = bidder.publicKey;
     await airdrop(bidderPublicKey);
