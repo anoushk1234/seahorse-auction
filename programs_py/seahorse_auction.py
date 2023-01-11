@@ -22,6 +22,13 @@ class Auction(Account):
 
 
 @instruction
+def deposit_item(
+    seller_item_ata: TokenAccount, payer: Signer, item_holder: TokenAccount
+):
+    seller_item_ata.transfer(payer, item_holder, seller_item_ata.amount(), [payer])
+
+
+@instruction
 def create_auction(
     auction: Empty[Auction],
     start_price: u64,
@@ -40,12 +47,18 @@ def create_auction(
 
     currency_holder.init(
         payer=payer,
+        seeds=["currency_holder", seller.key(), currency.key()],
         mint=currency,
         authority=auction,
-        associated=True,
-        # decimals= 6
     )
-    item_holder.init(payer=payer, mint=item, authority=auction, associated=True)
+    item_holder.init(
+        payer=payer,
+        seeds=["item_holder", seller.key(), item.key()],
+        mint=item,
+        authority=auction,
+    )
+    
+
     auction.ongoing = True
     auction.seller = seller.key()
     auction.item_holder = item_holder.key()
@@ -53,7 +66,7 @@ def create_auction(
     auction.currency = currency.key()
     auction.bidder = seller.key()
     auction.price = start_price
-    auction.refund_receiver = seller.key()
+    auction.refund_receiver = currency_holder.key()
     auction.timed = False
     if timed:
         auction.timed = timed
@@ -67,7 +80,7 @@ def bid(
     auction: Auction,
     price: u64,
     bidder: TokenAccount,
-    authority: Signer,
+    authority: Signer,  # has to be bidder's signer
     currency_holder: TokenAccount,
     refund_receiver: TokenAccount,
     clock: Clock,
@@ -76,7 +89,7 @@ def bid(
         assert clock.unix_timestamp() >= auction.go_live, "Auction hasn't started"
         assert clock.unix_timestamp() < auction.end, "Auction has ended"
     assert (
-        price <= auction.price
+        price > auction.price
     ), "Bid Price Too Low"  # bid shouldnt be less than previous bid
     assert (
         auction.currency_holder == currency_holder.key()
@@ -85,17 +98,21 @@ def bid(
         refund_receiver.key() == auction.refund_receiver
     ), "Invalid Refund Receiver"  # ata validity check
 
-    if auction.refund_receiver != auction.seller:
+    if auction.refund_receiver != currency_holder.key():
+        print("valid refund receiver")
         currency_holder.transfer(
             auction, refund_receiver, refund_receiver.amount()
         )  # Previous bidder gets their bid refunded
+        print("refund complete")
 
+    print("Transfer from bidder to vault")
     bidder.transfer(
         authority=authority, to=currency_holder, amount=price
     )  # tranfser bid the pda's token account
-
+    print("transfer complete")
     auction.price = price  # update the price to the new bid
     auction.bidder = bidder.authority()  # set the new bidder
+    auction.refund_receiver = bidder.authority()
 
 
 @instruction
@@ -117,11 +134,15 @@ def close_auction(
         seller.key() == auction.seller and seller_ata.authority() == auction.seller
     ), "Signer not seller or unauthorized seller ata"
 
+    print("Transfer item to bid winner")
     item_holder.transfer(
         authority=auction, to=item_receiver, amount=item_holder.amount()
     )
+    print("auction item transferred successfully")
     if currency_holder.amount() >= auction.price:
+        print("Transferring bid payment to seller")
         currency_holder.transfer(
             authority=auction, to=seller_ata, amount=currency_holder.amount()
         )
+        print("Bid transferred successfully")
     auction.ongoing = False

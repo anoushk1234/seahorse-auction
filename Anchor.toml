@@ -2,7 +2,7 @@
 seeds = true
 skip-lint = false
 [programs.localnet]
-seahorse_auction = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+seahorse_auction = "DPzpTr7kZupCWD98LaWNTtXAMhv3qKX7w9CdG7bo5acS"
 
 [registry]
 url = "https://api.apr.dev"

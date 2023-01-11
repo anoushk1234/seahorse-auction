@@ -6,6 +6,7 @@ import {
 } from "@solana/spl-token";
 // import { TOKEN_PROGRAM_ID } from "@project-serum/anchor/dist/cjs/utils/token";
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { SeahorseAuction } from "../target/types/seahorse_auction";
 const { log } = console;
 const provider = anchor.getProvider();
 
@@ -55,4 +56,15 @@ export async function mintNewToken(
     decimals
   );
   return [mintPubkey, ata, mintTxn];
+}
+
+export async function pdaTokenAccount(
+  seeds: (Uint8Array | Buffer)[],
+  program: anchor.Program<SeahorseAuction>
+) {
+  const [pda, _] = await anchor.web3.PublicKey.findProgramAddress(
+    seeds,
+    program.programId
+  );
+  return pda;
 }

@@ -295,15 +295,14 @@ mod seahorse_auction {
         #[account(mut)]
         #[doc = "CHECK: This account is unchecked."]
         pub seller: UncheckedAccount<'info>,
-        # [account (init , payer = payer , associated_token :: mint = currency , associated_token :: authority = auction)]
+        # [account (init , payer = payer , seeds = ["currency_holder" . as_bytes () . as_ref () , seller . key () . as_ref () , currency . key () . as_ref ()] , bump , token :: mint = currency , token :: authority = auction)]
         pub currency_holder: Box<Account<'info, TokenAccount>>,
-        # [account (init , payer = payer , associated_token :: mint = item , associated_token :: authority = auction)]
+        # [account (init , payer = payer , seeds = ["item_holder" . as_bytes () . as_ref () , seller . key () . as_ref () , item . key () . as_ref ()] , bump , token :: mint = item , token :: authority = auction)]
         pub item_holder: Box<Account<'info, TokenAccount>>,
         #[account(mut)]
         pub currency: Box<Account<'info, Mint>>,
         #[account(mut)]
         pub item: Box<Account<'info, Mint>>,
-        pub associated_token_program: Program<'info, AssociatedToken>,
         pub rent: Sysvar<'info, Rent>,
         pub system_program: Program<'info, System>,
         pub token_program: Program<'info, Token>,
@@ -317,11 +316,6 @@ mod seahorse_auction {
         end: i64,
     ) -> Result<()> {
         let mut programs = HashMap::new();
-
-        programs.insert(
-            "associated_token_program",
-            ctx.accounts.associated_token_program.to_account_info(),
-        );
 
         programs.insert(
             "system_program",
@@ -386,6 +380,46 @@ mod seahorse_auction {
         );
 
         dot::program::Auction::store(auction.account);
+
+        return Ok(());
+    }
+
+    #[derive(Accounts)]
+    pub struct DepositItem<'info> {
+        #[account(mut)]
+        pub seller_item_ata: Box<Account<'info, TokenAccount>>,
+        #[account(mut)]
+        pub payer: Signer<'info>,
+        #[account(mut)]
+        pub item_holder: Box<Account<'info, TokenAccount>>,
+        pub token_program: Program<'info, Token>,
+    }
+
+    pub fn deposit_item(ctx: Context<DepositItem>) -> Result<()> {
+        let mut programs = HashMap::new();
+
+        programs.insert(
+            "token_program",
+            ctx.accounts.token_program.to_account_info(),
+        );
+
+        let programs_map = ProgramsMap(programs);
+        let seller_item_ata = SeahorseAccount {
+            account: &ctx.accounts.seller_item_ata,
+            programs: &programs_map,
+        };
+
+        let payer = SeahorseSigner {
+            account: &ctx.accounts.payer,
+            programs: &programs_map,
+        };
+
+        let item_holder = SeahorseAccount {
+            account: &ctx.accounts.item_holder,
+            programs: &programs_map,
+        };
+
+        deposit_item_handler(seller_item_ata.clone(), payer.clone(), item_holder.clone());
 
         return Ok(());
     }

@@ -140,7 +140,7 @@ pub fn bid_handler<'info>(
         }
     }
 
-    if !(price <= auction.borrow().price) {
+    if !(price > auction.borrow().price) {
         panic!("Bid Price Too Low");
     }
 
@@ -152,7 +152,9 @@ pub fn bid_handler<'info>(
         panic!("Invalid Refund Receiver");
     }
 
-    if auction.borrow().refund_receiver != auction.borrow().seller {
+    if auction.borrow().refund_receiver != currency_holder.key() {
+        solana_program::msg!("{}", "valid refund receiver");
+
         token::transfer(
             CpiContext::new(
                 currency_holder.programs.get("token_program"),
@@ -165,7 +167,11 @@ pub fn bid_handler<'info>(
             refund_receiver.amount,
         )
         .unwrap();
+
+        solana_program::msg!("{}", "refund complete");
     }
+
+    solana_program::msg!("{}", "Transfer from bidder to vault");
 
     token::transfer(
         CpiContext::new(
@@ -180,9 +186,13 @@ pub fn bid_handler<'info>(
     )
     .unwrap();
 
+    solana_program::msg!("{}", "transfer complete");
+
     assign!(auction.borrow_mut().price, price);
 
     assign!(auction.borrow_mut().bidder, bidder.owner);
+
+    assign!(auction.borrow_mut().refund_receiver, bidder.owner);
 }
 
 pub fn close_auction_handler<'info>(
@@ -217,6 +227,8 @@ pub fn close_auction_handler<'info>(
         panic!("Signer not seller or unauthorized seller ata");
     }
 
+    solana_program::msg!("{}", "Transfer item to bid winner");
+
     token::transfer(
         CpiContext::new(
             item_holder.programs.get("token_program"),
@@ -230,7 +242,11 @@ pub fn close_auction_handler<'info>(
     )
     .unwrap();
 
+    solana_program::msg!("{}", "auction item transferred successfully");
+
     if currency_holder.amount >= auction.borrow().price {
+        solana_program::msg!("{}", "Transferring bid payment to seller");
+
         token::transfer(
             CpiContext::new(
                 currency_holder.programs.get("token_program"),
@@ -243,6 +259,8 @@ pub fn close_auction_handler<'info>(
             currency_holder.amount,
         )
         .unwrap();
+
+        solana_program::msg!("{}", "Bid transferred successfully");
     }
 
     assign!(auction.borrow_mut().ongoing, false);
@@ -284,7 +302,10 @@ pub fn create_auction_handler<'info>(
 
     assign!(auction.borrow_mut().price, start_price);
 
-    assign!(auction.borrow_mut().refund_receiver, seller.key());
+    assign!(
+        auction.borrow_mut().refund_receiver,
+        currency_holder.account.key()
+    );
 
     assign!(auction.borrow_mut().timed, false);
 
@@ -299,4 +320,24 @@ pub fn create_auction_handler<'info>(
 
         assign!(auction.borrow_mut().end, end);
     }
+}
+
+pub fn deposit_item_handler<'info>(
+    mut seller_item_ata: SeahorseAccount<'info, '_, TokenAccount>,
+    mut payer: SeahorseSigner<'info, '_>,
+    mut item_holder: SeahorseAccount<'info, '_, TokenAccount>,
+) -> () {
+    token::transfer(
+        CpiContext::new_with_signer(
+            seller_item_ata.programs.get("token_program"),
+            token::Transfer {
+                from: seller_item_ata.to_account_info(),
+                authority: payer.to_account_info(),
+                to: item_holder.to_account_info(),
+            },
+            &[Mutable::new(vec![payer.key().as_ref()]).borrow().as_slice()],
+        ),
+        seller_item_ata.amount,
+    )
+    .unwrap();
 }

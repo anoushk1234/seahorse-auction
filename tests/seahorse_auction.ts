@@ -7,9 +7,10 @@ import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
   mintToChecked,
+  transferChecked,
 } from "@solana/spl-token";
 import { SeahorseAuction } from "../target/types/seahorse_auction";
-import { airdrop, mintNewToken } from "./helpers";
+import { airdrop, mintNewToken, pdaTokenAccount } from "./helpers";
 const { log } = console;
 describe("seahorse_auction", () => {
   // Configure the client to use the local cluster.
@@ -23,11 +24,13 @@ describe("seahorse_auction", () => {
   const sellerPublicKey = seller.publicKey;
   const itemMint = kp();
   const paymentToken = kp();
+  const bidder = kp();
   let sellerItemATA: anchor.web3.PublicKey;
   let sellerPaymentATA: anchor.web3.PublicKey;
   let auctionPDA: anchor.web3.PublicKey;
   let currencyHolder: anchor.web3.PublicKey;
   let itemHolder: anchor.web3.PublicKey;
+  let bidderPaymentATA: anchor.web3.PublicKey;
   log("itemMint: ", spk(itemMint.publicKey));
   log("sellerPublicKey: ", spk(sellerPublicKey));
   log("paymentToken: ", spk(paymentToken.publicKey));
@@ -83,26 +86,51 @@ describe("seahorse_auction", () => {
     sellerPaymentATA = ata_ as anchor.web3.PublicKey;
     log("sellerPaymentATA: ", sellerPaymentATA.toBase58());
   });
-  it("Is initialized!", async () => {
+  it("It creates an auction", async () => {
     // Add your test here.
     const [auctionPDA_, _] = await anchor.web3.PublicKey.findProgramAddress(
       [anchor.utils.bytes.utf8.encode("auction"), sellerPublicKey.toBytes()],
       program.programId
     );
     auctionPDA = auctionPDA_;
-    currencyHolder = await getAssociatedTokenAddress(
-      paymentToken.publicKey,
-      auctionPDA_,
-      true
+    currencyHolder = await pdaTokenAccount(
+      [
+        anchor.utils.bytes.utf8.encode("currency_holder"),
+        seller.publicKey.toBytes(),
+        paymentToken.publicKey.toBytes(),
+      ],
+      program
     );
-    itemHolder = await getAssociatedTokenAddress(
-      itemMint.publicKey,
-      auctionPDA_,
-      true
+
+    itemHolder = await pdaTokenAccount(
+      [
+        anchor.utils.bytes.utf8.encode("item_holder"),
+        seller.publicKey.toBytes(),
+        itemMint.publicKey.toBytes(),
+      ],
+      program
     );
+    log("auctionPDA: ", auctionPDA.toBase58());
+    log("currencyHolder: ", currencyHolder.toBase58());
+    log("itemHolder: ", itemHolder.toBase58());
+
+    // const transferItemFromSellerToItemHolder = await transferChecked(
+    //   con,
+    //   seller,
+    //   sellerItemATA,
+    //   itemMint.publicKey,
+    //   itemHolder,
+    //   seller,
+    //   1,
+    //   0
+    // );
+    // log(
+    //   "transferItemFromSellerToItemHolder: ",
+    //   transferItemFromSellerToItemHolder
+    // );
     const tx = await program.methods
       .createAuction(
-        new anchor.BN(50),
+        new anchor.BN(50 * 10 ** 6),
         false,
         new anchor.BN(Date.now()),
         new anchor.BN(Date.now())
@@ -115,10 +143,89 @@ describe("seahorse_auction", () => {
         seller: sellerPublicKey,
         auction: auctionPDA_,
         payer: sellerPublicKey,
+
         systemProgram: anchor.web3.SystemProgram.programId,
       })
       .signers([seller])
       .rpc();
+    console.log("Your transaction signature", tx);
+  });
+  it("It bids on an auction", async () => {
+    const pre = await program.methods
+      .depositItem()
+      .accounts({
+        sellerItemAta: sellerItemATA,
+        itemHolder: itemHolder,
+        payer: sellerPublicKey,
+      })
+      .signers([seller])
+      .rpc();
+    console.log("Your transaction signature", pre);
+    const bidderPublicKey = bidder.publicKey;
+    await airdrop(bidderPublicKey);
+    const price = new anchor.BN(80 * 10 ** 6);
+    bidderPaymentATA = await createAssociatedTokenAccount(
+      con,
+      bidder,
+      paymentToken.publicKey,
+      bidderPublicKey
+    );
+    const mintTxn = await transferChecked(
+      con,
+      bidder,
+      sellerPaymentATA,
+      paymentToken.publicKey,
+      bidderPaymentATA,
+      seller,
+      200 * 10 ** 6,
+      6
+    );
+    log(
+      "bid auction price: ",
+      await (
+        await program.account.auction.fetch(auctionPDA)
+      ).refundReceiver.toBase58(),
+      price.toNumber(),
+      bidderPaymentATA.toBase58()
+    );
+    const tx = await program.methods
+      .bid(price)
+      .accounts({
+        refundReceiver: currencyHolder, // first bid pass currency holder, second bid pass previous bidder
+        currencyHolder: currencyHolder,
+        bidder: bidderPaymentATA,
+        auction: auctionPDA,
+        authority: bidderPublicKey,
+        clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
+      })
+      .signers([bidder])
+      .rpc({
+        skipPreflight: true,
+      });
+    console.log("Your transaction signature", tx);
+  });
+  it("It ends an auction", async () => {
+    const itemHolderForBidder = await createAssociatedTokenAccount(
+      con,
+      bidder,
+      itemMint.publicKey,
+      bidder.publicKey
+    );
+    const tx = await program.methods
+      .closeAuction()
+      .accounts({
+        auction: auctionPDA,
+        currencyHolder: currencyHolder,
+        itemHolder: itemHolder,
+        itemReceiver: itemHolderForBidder,
+        seller: sellerPublicKey,
+        sellerAta: sellerPaymentATA,
+        clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
+      })
+      .signers([seller])
+      .rpc({
+        skipPreflight: true,
+      });
     console.log("Your transaction signature", tx);
   });
 });
