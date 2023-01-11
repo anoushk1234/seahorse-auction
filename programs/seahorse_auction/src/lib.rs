@@ -160,6 +160,10 @@ mod seahorse_auction {
         pub authority: Signer<'info>,
         #[account(mut)]
         pub currency_holder: Box<Account<'info, TokenAccount>>,
+        #[account(mut)]
+        pub refund_receiver: Box<Account<'info, TokenAccount>>,
+        #[account()]
+        pub clock: Sysvar<'info, Clock>,
         pub token_program: Program<'info, Token>,
     }
 
@@ -188,12 +192,21 @@ mod seahorse_auction {
             programs: &programs_map,
         };
 
+        let refund_receiver = SeahorseAccount {
+            account: &ctx.accounts.refund_receiver,
+            programs: &programs_map,
+        };
+
+        let clock = &ctx.accounts.clock.clone();
+
         bid_handler(
             auction.clone(),
             price,
             bidder.clone(),
             authority.clone(),
             currency_holder.clone(),
+            refund_receiver.clone(),
+            clock.clone(),
         );
 
         dot::program::Auction::store(auction);
@@ -212,11 +225,11 @@ mod seahorse_auction {
         #[account(mut)]
         pub currency_holder: Box<Account<'info, TokenAccount>>,
         #[account(mut)]
-        pub item_holder_auth: Signer<'info>,
+        pub seller: Signer<'info>,
         #[account(mut)]
-        pub currency_holder_auth: Signer<'info>,
-        #[account(mut)]
-        pub currency_receiver: Box<Account<'info, TokenAccount>>,
+        pub seller_ata: Box<Account<'info, TokenAccount>>,
+        #[account()]
+        pub clock: Sysvar<'info, Clock>,
         pub token_program: Program<'info, Token>,
     }
 
@@ -245,29 +258,26 @@ mod seahorse_auction {
             programs: &programs_map,
         };
 
-        let item_holder_auth = SeahorseSigner {
-            account: &ctx.accounts.item_holder_auth,
+        let seller = SeahorseSigner {
+            account: &ctx.accounts.seller,
             programs: &programs_map,
         };
 
-        let currency_holder_auth = SeahorseSigner {
-            account: &ctx.accounts.currency_holder_auth,
+        let seller_ata = SeahorseAccount {
+            account: &ctx.accounts.seller_ata,
             programs: &programs_map,
         };
 
-        let currency_receiver = SeahorseAccount {
-            account: &ctx.accounts.currency_receiver,
-            programs: &programs_map,
-        };
+        let clock = &ctx.accounts.clock.clone();
 
         close_auction_handler(
             auction.clone(),
             item_receiver.clone(),
             item_holder.clone(),
             currency_holder.clone(),
-            item_holder_auth.clone(),
-            currency_holder_auth.clone(),
-            currency_receiver.clone(),
+            seller.clone(),
+            seller_ata.clone(),
+            clock.clone(),
         );
 
         dot::program::Auction::store(auction);
@@ -276,7 +286,7 @@ mod seahorse_auction {
     }
 
     #[derive(Accounts)]
-    # [instruction (start_price : u64)]
+    # [instruction (start_price : u64 , timed : bool , go_live : i64 , end : i64)]
     pub struct CreateAuction<'info> {
         # [account (init , space = std :: mem :: size_of :: < dot :: program :: Auction > () + 8 , payer = payer , seeds = ["auction" . as_bytes () . as_ref () , seller . key () . as_ref ()] , bump)]
         pub auction: Box<Account<'info, dot::program::Auction>>,
@@ -285,20 +295,36 @@ mod seahorse_auction {
         #[account(mut)]
         #[doc = "CHECK: This account is unchecked."]
         pub seller: UncheckedAccount<'info>,
-        #[account(mut)]
+        # [account (init , payer = payer , seeds = ["currency_account" . as_bytes () . as_ref ()] , bump , token :: mint = currency , token :: authority = auction)]
         pub currency_holder: Box<Account<'info, TokenAccount>>,
-        #[account(mut)]
+        # [account (init , payer = payer , seeds = ["item_account" . as_bytes () . as_ref ()] , bump , token :: mint = item , token :: authority = auction)]
         pub item_holder: Box<Account<'info, TokenAccount>>,
+        #[account(mut)]
+        pub currency: Box<Account<'info, Mint>>,
+        #[account(mut)]
+        pub item: Box<Account<'info, Mint>>,
         pub rent: Sysvar<'info, Rent>,
         pub system_program: Program<'info, System>,
+        pub token_program: Program<'info, Token>,
     }
 
-    pub fn create_auction(ctx: Context<CreateAuction>, start_price: u64) -> Result<()> {
+    pub fn create_auction(
+        ctx: Context<CreateAuction>,
+        start_price: u64,
+        timed: bool,
+        go_live: i64,
+        end: i64,
+    ) -> Result<()> {
         let mut programs = HashMap::new();
 
         programs.insert(
             "system_program",
             ctx.accounts.system_program.to_account_info(),
+        );
+
+        programs.insert(
+            "token_program",
+            ctx.accounts.token_program.to_account_info(),
         );
 
         let programs_map = ProgramsMap(programs);
@@ -313,13 +339,29 @@ mod seahorse_auction {
         };
 
         let seller = &ctx.accounts.seller.clone();
-        let currency_holder = SeahorseAccount {
-            account: &ctx.accounts.currency_holder,
+        let currency_holder = Empty {
+            account: SeahorseAccount {
+                account: &ctx.accounts.currency_holder,
+                programs: &programs_map,
+            },
+            bump: ctx.bumps.get("currency_holder").map(|bump| *bump),
+        };
+
+        let item_holder = Empty {
+            account: SeahorseAccount {
+                account: &ctx.accounts.item_holder,
+                programs: &programs_map,
+            },
+            bump: ctx.bumps.get("item_holder").map(|bump| *bump),
+        };
+
+        let currency = SeahorseAccount {
+            account: &ctx.accounts.currency,
             programs: &programs_map,
         };
 
-        let item_holder = SeahorseAccount {
-            account: &ctx.accounts.item_holder,
+        let item = SeahorseAccount {
+            account: &ctx.accounts.item,
             programs: &programs_map,
         };
 
@@ -330,6 +372,11 @@ mod seahorse_auction {
             seller.clone(),
             currency_holder.clone(),
             item_holder.clone(),
+            currency.clone(),
+            item.clone(),
+            timed,
+            go_live,
+            end,
         );
 
         dot::program::Auction::store(auction.account);

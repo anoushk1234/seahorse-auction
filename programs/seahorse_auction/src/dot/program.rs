@@ -13,8 +13,13 @@ pub struct Auction {
     pub seller: Pubkey,
     pub item_holder: Pubkey,
     pub currency_holder: Pubkey,
+    pub currency: Pubkey,
+    pub refund_receiver: Pubkey,
     pub bidder: Pubkey,
     pub price: u64,
+    pub timed: bool,
+    pub go_live: i64,
+    pub end: i64,
 }
 
 impl<'info, 'entrypoint> Auction {
@@ -26,8 +31,13 @@ impl<'info, 'entrypoint> Auction {
         let seller = account.seller.clone();
         let item_holder = account.item_holder.clone();
         let currency_holder = account.currency_holder.clone();
+        let currency = account.currency.clone();
+        let refund_receiver = account.refund_receiver.clone();
         let bidder = account.bidder.clone();
         let price = account.price;
+        let timed = account.timed.clone();
+        let go_live = account.go_live;
+        let end = account.end;
 
         Mutable::new(LoadedAuction {
             __account__: account,
@@ -36,8 +46,13 @@ impl<'info, 'entrypoint> Auction {
             seller,
             item_holder,
             currency_holder,
+            currency,
+            refund_receiver,
             bidder,
             price,
+            timed,
+            go_live,
+            end,
         })
     }
 
@@ -59,6 +74,14 @@ impl<'info, 'entrypoint> Auction {
 
         loaded.__account__.currency_holder = currency_holder;
 
+        let currency = loaded.currency.clone();
+
+        loaded.__account__.currency = currency;
+
+        let refund_receiver = loaded.refund_receiver.clone();
+
+        loaded.__account__.refund_receiver = refund_receiver;
+
         let bidder = loaded.bidder.clone();
 
         loaded.__account__.bidder = bidder;
@@ -66,6 +89,18 @@ impl<'info, 'entrypoint> Auction {
         let price = loaded.price;
 
         loaded.__account__.price = price;
+
+        let timed = loaded.timed.clone();
+
+        loaded.__account__.timed = timed;
+
+        let go_live = loaded.go_live;
+
+        loaded.__account__.go_live = go_live;
+
+        let end = loaded.end;
+
+        loaded.__account__.end = end;
     }
 }
 
@@ -77,8 +112,13 @@ pub struct LoadedAuction<'info, 'entrypoint> {
     pub seller: Pubkey,
     pub item_holder: Pubkey,
     pub currency_holder: Pubkey,
+    pub currency: Pubkey,
+    pub refund_receiver: Pubkey,
     pub bidder: Pubkey,
     pub price: u64,
+    pub timed: bool,
+    pub go_live: i64,
+    pub end: i64,
 }
 
 pub fn bid_handler<'info>(
@@ -87,13 +127,44 @@ pub fn bid_handler<'info>(
     mut bidder: SeahorseAccount<'info, '_, TokenAccount>,
     mut authority: SeahorseSigner<'info, '_>,
     mut currency_holder: SeahorseAccount<'info, '_, TokenAccount>,
+    mut refund_receiver: SeahorseAccount<'info, '_, TokenAccount>,
+    mut clock: Sysvar<'info, Clock>,
 ) -> () {
+    if auction.borrow().timed {
+        if !(clock.unix_timestamp >= auction.borrow().go_live) {
+            panic!("Auction hasn't started");
+        }
+
+        if !(clock.unix_timestamp < auction.borrow().end) {
+            panic!("Auction has ended");
+        }
+    }
+
     if !(price <= auction.borrow().price) {
         panic!("Bid Price Too Low");
     }
 
     if !(auction.borrow().currency_holder == currency_holder.key()) {
         panic!("Unauthorized Currency Holder");
+    }
+
+    if !(refund_receiver.key() == auction.borrow().refund_receiver) {
+        panic!("Invalid Refund Receiver");
+    }
+
+    if auction.borrow().refund_receiver != auction.borrow().seller {
+        token::transfer(
+            CpiContext::new(
+                currency_holder.programs.get("token_program"),
+                token::Transfer {
+                    from: currency_holder.to_account_info(),
+                    authority: auction.borrow().__account__.to_account_info(),
+                    to: refund_receiver.to_account_info(),
+                },
+            ),
+            refund_receiver.amount,
+        )
+        .unwrap();
     }
 
     token::transfer(
@@ -119,10 +190,16 @@ pub fn close_auction_handler<'info>(
     mut item_receiver: SeahorseAccount<'info, '_, TokenAccount>,
     mut item_holder: SeahorseAccount<'info, '_, TokenAccount>,
     mut currency_holder: SeahorseAccount<'info, '_, TokenAccount>,
-    mut item_holder_auth: SeahorseSigner<'info, '_>,
-    mut currency_holder_auth: SeahorseSigner<'info, '_>,
-    mut currency_receiver: SeahorseAccount<'info, '_, TokenAccount>,
+    mut seller: SeahorseSigner<'info, '_>,
+    mut seller_ata: SeahorseAccount<'info, '_, TokenAccount>,
+    mut clock: Sysvar<'info, Clock>,
 ) -> () {
+    if auction.borrow().timed {
+        if !(clock.unix_timestamp >= auction.borrow().end) {
+            panic!("Auction hasn't ended yet");
+        }
+    }
+
     if !(item_holder.key() == auction.borrow().item_holder) {
         panic!("Unauthorized Item Holder");
     }
@@ -132,7 +209,12 @@ pub fn close_auction_handler<'info>(
     }
 
     if !(auction.borrow().bidder == item_receiver.owner) {
-        panic!("Receiver not Owner");
+        panic!("Receiver not Bid Winner");
+    }
+
+    if !((seller.key() == auction.borrow().seller) && (seller_ata.owner == auction.borrow().seller))
+    {
+        panic!("Signer not seller or unauthorized seller ata");
     }
 
     token::transfer(
@@ -140,7 +222,7 @@ pub fn close_auction_handler<'info>(
             item_holder.programs.get("token_program"),
             token::Transfer {
                 from: item_holder.to_account_info(),
-                authority: item_holder_auth.to_account_info(),
+                authority: auction.borrow().__account__.to_account_info(),
                 to: item_receiver.to_account_info(),
             },
         ),
@@ -154,11 +236,11 @@ pub fn close_auction_handler<'info>(
                 currency_holder.programs.get("token_program"),
                 token::Transfer {
                     from: currency_holder.to_account_info(),
-                    authority: currency_holder_auth.to_account_info(),
-                    to: currency_receiver.to_account_info(),
+                    authority: auction.borrow().__account__.to_account_info(),
+                    to: seller_ata.to_account_info(),
                 },
             ),
-            auction.borrow().price,
+            currency_holder.amount,
         )
         .unwrap();
     }
@@ -171,20 +253,50 @@ pub fn create_auction_handler<'info>(
     mut start_price: u64,
     mut payer: SeahorseSigner<'info, '_>,
     mut seller: UncheckedAccount<'info>,
-    mut currency_holder: SeahorseAccount<'info, '_, TokenAccount>,
-    mut item_holder: SeahorseAccount<'info, '_, TokenAccount>,
+    mut currency_holder: Empty<SeahorseAccount<'info, '_, TokenAccount>>,
+    mut item_holder: Empty<SeahorseAccount<'info, '_, TokenAccount>>,
+    mut currency: SeahorseAccount<'info, '_, Mint>,
+    mut item: SeahorseAccount<'info, '_, Mint>,
+    mut timed: bool,
+    mut go_live: i64,
+    mut end: i64,
 ) -> () {
     let mut auction = auction.account.clone();
+
+    currency_holder.account.clone();
+
+    item_holder.account.clone();
 
     assign!(auction.borrow_mut().ongoing, true);
 
     assign!(auction.borrow_mut().seller, seller.key());
 
-    assign!(auction.borrow_mut().item_holder, item_holder.key());
+    assign!(auction.borrow_mut().item_holder, item_holder.account.key());
 
-    assign!(auction.borrow_mut().currency_holder, currency_holder.key());
+    assign!(
+        auction.borrow_mut().currency_holder,
+        currency_holder.account.key()
+    );
+
+    assign!(auction.borrow_mut().currency, currency.key());
 
     assign!(auction.borrow_mut().bidder, seller.key());
 
     assign!(auction.borrow_mut().price, start_price);
+
+    assign!(auction.borrow_mut().refund_receiver, seller.key());
+
+    assign!(auction.borrow_mut().timed, false);
+
+    if timed {
+        assign!(auction.borrow_mut().timed, timed);
+
+        if !(go_live < end) {
+            panic!("Start time exceeds end time");
+        }
+
+        assign!(auction.borrow_mut().go_live, go_live);
+
+        assign!(auction.borrow_mut().end, end);
+    }
 }
